@@ -16,11 +16,6 @@ from .services.clustering_service import (
 )
 from .services.compare_service import build_compare_response
 from .services.metals_service import MetalsDataError, get_metals_history, predict_metal_price
-from .services.report_service import (
-    build_portfolio_report_blocks,
-    render_portfolio_report_pdf,
-    render_portfolio_report_txt,
-)
 from .services.risk_service import RiskAnalysisError, analyze_portfolio_risk, analyze_single_stock_risk
 from .services.stock_service import get_stock_detail, get_stock_metrics, search_stocks
 
@@ -59,6 +54,11 @@ def _stock_to_dict(stock, include_live_metrics=False):
     if include_live_metrics:
         payload.update(get_stock_metrics(stock.stock_symbol))
     return payload
+
+
+class HealthCheckView(View):
+    def get(self, request):
+        return JsonResponse({"status": "ok"}, status=200)
 
 
 class ApiAuthView(View):
@@ -436,6 +436,12 @@ class BtcForecastView(ApiAuthView):
 @method_decorator(csrf_exempt, name="dispatch")
 class PortfolioReportView(ApiAuthView):
     def post(self, request):
+        from .services.report_service import (
+            build_portfolio_report_blocks,
+            render_portfolio_report_pdf,
+            render_portfolio_report_txt,
+        )
+
         user, error = self._get_user_or_error(request)
         if error:
             return error

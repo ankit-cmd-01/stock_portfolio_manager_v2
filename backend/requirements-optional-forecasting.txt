@@ -1,0 +1,6 @@
+# Optional packages for richer BTC forecasting on the VM.
+# The backend will still run without these packages.
+pmdarima>=2.0,<3.0
+statsmodels>=0.14,<1.0
+tensorflow-cpu>=2.18,<3.0
+

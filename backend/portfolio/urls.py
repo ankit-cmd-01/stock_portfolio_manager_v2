@@ -6,6 +6,7 @@ from .views import (
     ClusteringMarketView,
     ClusteringPortfolioView,
     CompareView,
+    HealthCheckView,
     MetalsHistoryView,
     MetalsPredictView,
     PortfolioReportView,
@@ -19,6 +20,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path("health/", HealthCheckView.as_view(), name="health-check"),
     path("stocks/search/", StockSearchView.as_view(), name="stocks-search"),
     path("stocks/detail/<str:symbol>/", StockDetailView.as_view(), name="stock-detail"),
     path("compare/", CompareView.as_view(), name="compare"),
