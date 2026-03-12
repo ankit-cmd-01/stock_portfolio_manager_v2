@@ -1,4 +1,4 @@
-yamlname: Deploy to Azure VM
+name: Deploy to Azure VM
 on:
   push:
     branches:
