@@ -16,6 +16,8 @@ import Card from "../../components/ui/Card";
 import useChartTheme from "../../hooks/useChartTheme";
 import { getMetalsHistory, predictMetalPrice } from "../../services/portfolioApi";
 
+const VOLATILITY_WINDOW_DAYS = 30;
+
 const toNumberOrNull = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -45,6 +47,15 @@ const formatAxisTickCurrency = (value) => {
     maximumFractionDigits: 1,
   }).format(parsed);
   return `INR ${compact}`;
+};
+
+const formatPercent = (value) => {
+  const parsed = toNumberOrNull(value);
+  if (parsed === null) return "N/A";
+  return new Intl.NumberFormat("en-IN", {
+    style: "percent",
+    maximumFractionDigits: 2,
+  }).format(parsed);
 };
 
 const formatDateLabel = (value) => {
@@ -105,6 +116,55 @@ const paddedDomain = (minValue, maxValue) => {
   const span = max - min;
   const pad = span * 0.08;
   return [min - pad, max + pad];
+};
+
+const calculateStandardDeviation = (values) => {
+  if (values.length < 2) return null;
+
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance =
+    values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / (values.length - 1);
+
+  return Math.sqrt(variance);
+};
+
+const buildRollingVolatilityData = (points, windowSize) => {
+  if (points.length <= windowSize) return [];
+
+  const dailyReturns = [];
+
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+
+    if (
+      previous.gold_price_inr_per_gram <= 0 ||
+      previous.silver_price_inr_per_gram <= 0
+    ) {
+      continue;
+    }
+
+    dailyReturns.push({
+      date: current.date,
+      gold_return:
+        (current.gold_price_inr_per_gram / previous.gold_price_inr_per_gram) - 1,
+      silver_return:
+        (current.silver_price_inr_per_gram / previous.silver_price_inr_per_gram) - 1,
+    });
+  }
+
+  const rollingVolatility = [];
+
+  for (let index = windowSize - 1; index < dailyReturns.length; index += 1) {
+    const window = dailyReturns.slice(index - windowSize + 1, index + 1);
+    rollingVolatility.push({
+      date: dailyReturns[index].date,
+      gold_volatility: calculateStandardDeviation(window.map((entry) => entry.gold_return)),
+      silver_volatility: calculateStandardDeviation(window.map((entry) => entry.silver_return)),
+    });
+  }
+
+  return rollingVolatility;
 };
 
 function ExploreMetals() {
@@ -175,26 +235,14 @@ function ExploreMetals() {
         regression_line: regression
           ? (regression.slope * point.x_gold) + regression.intercept
           : null,
-      }));
+    }));
     return { data, regression };
   }, [trendData]);
 
-  const scatterSilverGold = useMemo(() => {
-    const base = trendData.map((point) => ({
-      x_silver: point.silver_price_inr_per_gram,
-      y_gold: point.gold_price_inr_per_gram,
-    }));
-    const regression = computeRegression(base, "x_silver", "y_gold");
-    const data = [...base]
-      .sort((a, b) => a.x_silver - b.x_silver)
-      .map((point) => ({
-        ...point,
-        regression_line: regression
-          ? (regression.slope * point.x_silver) + regression.intercept
-          : null,
-      }));
-    return { data, regression };
-  }, [trendData]);
+  const volatilityComparisonData = useMemo(
+    () => buildRollingVolatilityData(trendData, VOLATILITY_WINDOW_DAYS),
+    [trendData]
+  );
 
   const goldValues = useMemo(
     () =>
@@ -233,17 +281,13 @@ function ExploreMetals() {
     return paddedDomain(Math.min(...values), Math.max(...values));
   }, [scatterGoldSilver.data]);
 
-  const silverGoldXDomain = useMemo(() => {
-    const values = scatterSilverGold.data.map((point) => point.x_silver);
+  const volatilityDomain = useMemo(() => {
+    const values = volatilityComparisonData
+      .flatMap((point) => [point.gold_volatility, point.silver_volatility])
+      .filter((value) => value !== null);
     if (values.length === 0) return [0, "auto"];
     return paddedDomain(Math.min(...values), Math.max(...values));
-  }, [scatterSilverGold.data]);
-
-  const silverGoldYDomain = useMemo(() => {
-    const values = scatterSilverGold.data.map((point) => point.y_gold);
-    if (values.length === 0) return [0, "auto"];
-    return paddedDomain(Math.min(...values), Math.max(...values));
-  }, [scatterSilverGold.data]);
+  }, [volatilityComparisonData]);
 
   const handlePredict = async () => {
     if (!predictionDate) {
@@ -443,8 +487,8 @@ function ExploreMetals() {
                   <Line
                     type="monotone"
                     dataKey="regression_line"
-                    name="Regression Line"
-                    stroke="#22d3ee"
+                    name="Regression Trend Line"
+                    stroke="#06b6d4"
                     strokeWidth={2.2}
                     dot={false}
                   />
@@ -456,44 +500,33 @@ function ExploreMetals() {
 
         <Card className={panelClass}>
           <div className="mb-4">
-            <p className={panelTitleClass}>Silver vs Gold Correlation</p>
+            <p className={panelTitleClass}>Volatility Comparison</p>
             <p className={bodyTextClass}>
-              This chart shows how gold prices usually move when silver prices go up or down.
+              Rolling 30-day price volatility — lower means more stable
             </p>
           </div>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={scatterSilverGold.data}>
+              <LineChart data={volatilityComparisonData}>
                 <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
                 <XAxis
-                  type="number"
-                  dataKey="x_silver"
-                  name="Silver Price"
+                  dataKey="date"
                   stroke={chartTheme.axis}
                   fontSize={11}
-                  tickFormatter={formatAxisTickCurrency}
-                  domain={silverGoldXDomain}
-                  tickCount={5}
-                  tickMargin={8}
-                  label={{
-                    value: "Silver Price (INR/g)",
-                    position: "insideBottom",
-                    offset: -4,
-                    style: { fill: chartTheme.axis, fontSize: 12 },
-                  }}
+                  minTickGap={38}
+                  tickMargin={10}
+                  interval="preserveStartEnd"
+                  tickFormatter={formatDateLabel}
                 />
                 <YAxis
-                  type="number"
-                  dataKey="y_gold"
-                  name="Gold Price"
                   stroke={chartTheme.axis}
                   fontSize={11}
-                  tickFormatter={formatAxisTickCurrency}
-                  domain={silverGoldYDomain}
+                  tickFormatter={formatPercent}
+                  domain={volatilityDomain}
                   tickCount={5}
                   width={66}
                   label={{
-                    value: "Gold Price (INR/g)",
+                    value: "30-Day Volatility",
                     angle: -90,
                     position: "insideLeft",
                     style: { fill: chartTheme.axis, fontSize: 12 },
@@ -501,28 +534,32 @@ function ExploreMetals() {
                 />
                 <Tooltip
                   contentStyle={chartTheme.tooltipStyle}
+                  labelFormatter={(label) => new Date(label).toLocaleDateString("en-IN")}
                   formatter={(value, name) => [
-                    `${formatCurrency(value)} / g`,
-                    name === "x_silver"
-                      ? "Silver price"
-                      : name === "y_gold"
-                        ? "Gold price"
-                        : "Typical gold price from the overall trend",
+                    formatPercent(value),
+                    name === "gold_volatility"
+                      ? "Gold 30-day volatility"
+                      : "Silver 30-day volatility",
                   ]}
                 />
                 <Legend wrapperStyle={chartTheme.legendStyle} />
-                <Scatter name="Daily Price Pair" dataKey="y_gold" fill="#f59e0b" />
-                {scatterSilverGold.regression ? (
-                  <Line
-                    type="monotone"
-                    dataKey="regression_line"
-                    name="Regression Line"
-                    stroke="#60a5fa"
-                    strokeWidth={2.2}
-                    dot={false}
-                  />
-                ) : null}
-              </ComposedChart>
+                <Line
+                  type="monotone"
+                  dataKey="gold_volatility"
+                  name="Gold 30-day volatility"
+                  stroke="#facc15"
+                  strokeWidth={2.4}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="silver_volatility"
+                  name="Silver 30-day volatility"
+                  stroke="#38bdf8"
+                  strokeWidth={2.4}
+                  dot={false}
+                />
+              </LineChart>
             </ResponsiveContainer>
           </div>
         </Card>
